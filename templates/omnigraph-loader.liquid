@@ -1,0 +1,95 @@
+<!--
+  All rights reserved 2026 © Syntaxial - Pro Modernis
+  Proprietary and confidential.
+-->
+
+<!-- OmniGraph Resilient Storefront Loader (DSI) -->
+
+{% comment %}
+  Replace DSI_ENDPOINT and DSI_API_KEY below in your theme settings or via theme customization.
+  Recommended: store the DSI endpoint in a secure config and do NOT commit secrets into theme files.
+  Environment variables expected in deployment: DSI_API_KEY (storefront key), APP_ID (injected via theme or Admin), DSI_ENDPOINT (server url)
+{% endcomment %}
+
+<script type="application/ld+json" id="omnigraph-liquid-fallback">
+{
+  "@context": "https://schema.org/",
+  "@type": "Product",
+  "name": {{ product.title | json }},
+  "url": {{ shop.url | append: product.url | json }},
+  "sku": {{ product.selected_or_first_available_variant.sku | json }},
+  "offers": {
+    "@type": "Offer",
+    "priceCurrency": {{ shop.currency | json }},
+    "price": {{ product.selected_or_first_available_variant.price | divided_by: 100.0 | json }}
+  }
+}
+</script>
+
+<script>
+(function() {
+    // --- Configuration ---
+    const DSI_ENDPOINT = '{{ shop.metafields.syntaxial.dsi_endpoint | default: "YOUR_PRODUCTION_DSI_SERVER_URL" }}';
+    const DSI_API_KEY = '{{ shop.metafields.syntaxial.dsi_api_key | default: "REPLACE_WITH_DSI_API_KEY" }}';
+    const APP_ID = '{{ __app_id | default: "default-app-id" }}';
+    const CACHE_KEY = 'omnigraph_schema_{{ product.id }}';
+    const ELEMENT_ID = 'omnigraph-dsi-schema';
+
+    // Product Data Extraction
+    const productData = {
+        'product.title': {{ product.title | json }},
+        'product.tags': {{ product.tags | json }},
+        'product.vendor': {{ product.vendor | json }},
+        'review_count': {{ product.metafields.reviews.count | default: 0 | json }},
+        'average_rating': {{ product.metafields.reviews.rating | default: 0.0 | json }},
+        'current_price': {{ product.selected_or_first_available_variant.price | divided_by: 100.0 | json }},
+        'inventory_quantity': {{ product.selected_or_first_available_variant.inventory_quantity | default: 0 | json }},
+        'product.metafields.custom.isbn': {{ product.metafields.custom.isbn | json }},
+        'product.metafields.custom.fabric_type': {{ product.metafields.custom.fabric_type | json }}
+    };
+
+    function injectSchema(jsonLdString) {
+        const fallback = document.getElementById('omnigraph-liquid-fallback');
+        if (fallback) fallback.remove();
+        let script = document.getElementById(ELEMENT_ID);
+        if (!script) {
+            script = document.createElement('script');
+            script.setAttribute('type', 'application/ld+json');
+            script.setAttribute('id', ELEMENT_ID);
+            document.head.appendChild(script);
+        }
+        script.textContent = jsonLdString;
+    }
+
+    function loadFromCache() {
+        try {
+            const cachedSchema = localStorage.getItem(CACHE_KEY);
+            if (cachedSchema) { injectSchema(cachedSchema); return true; }
+        } catch (e) { console.error(e); }
+        return false;
+    }
+
+    async function fetchAndInjectSchema() {
+        try {
+            const response = await fetch(DSI_ENDPOINT + '/api/dsi/schema', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-DSI-API-KEY': DSI_API_KEY,
+                },
+                body: JSON.stringify({ appId: APP_ID, productData: productData })
+            });
+
+            if (!response.ok) throw new Error(`DSI Engine error: ${response.statusText}`);
+            const data = await response.json();
+            injectSchema(data.schema);
+            try { localStorage.setItem(CACHE_KEY, data.schema); } catch (e) { console.warn('Failed to write cache'); }
+        } catch (error) {
+            console.error('OmniGraph DSI: Live fetch failed.', error);
+            if (!loadFromCache()) console.log('Using Liquid fallback.');
+        }
+    }
+
+    fetchAndInjectSchema();
+})();
+</script>
